@@ -2,18 +2,23 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from dotenv import load_dotenv
 
-# ดึงค่าแยกส่วนจาก .env
-user = os.getenv("DB_USER")
-password = os.getenv("DB_PASSWORD")
-host = os.getenv("DB_HOST") # ใน Docker จะใช้ชื่อ "postgres" ตามที่คุณตั้งไว้
-port = os.getenv("DB_PORT")
-db_name = os.getenv("DB_NAME")
+load_dotenv() # อย่าลืมบรรทัดนี้เพื่อโหลดค่าจาก .env
 
-# ประกอบ URL
-SQLALCHEMY_DATABASE_URL = f"postgresql://{user}:{password}@{host}:{port}/{db_name}"
+# ดึงค่ามาทีละตัว
+DB_USER = os.getenv("DB_USER")
+DB_PASS = os.getenv("DB_PASSWORD")
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME")
+
+
+# ตรวจสอบว่าไม่มีตัวแปรไหนเป็น None หรือ 'None'
+SQLALCHEMY_DATABASE_URL = "postgresql://admin:admin123@localhost:5432/credit_score_db"
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

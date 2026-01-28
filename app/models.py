@@ -21,7 +21,6 @@ class FinancialRecord(Base):
     net_monthly_income = Column(Numeric(15, 2))
     yearly_debt_payments = Column(Numeric(15, 2))
     credit_limit_used_pct = Column(Float)
-    credit_limit_used_pct = Column(Float)
     prev_defaults = Column(Integer)
     account_tenure_months = Column(Integer)  
     occupation_type = Column(String)
@@ -30,6 +29,7 @@ class FinancialRecord(Base):
 class CreditScoreLog(Base):
     __tablename__ = "credit_score_logs"
     log_id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer)
     record_id = Column(Integer, ForeignKey("financial_records.record_id"))
     raw_input_data = Column(JSON) # สำหรับเก็บข้อมูลทั้งหมดที่ลูกค้ากรอก
     final_score = Column(Integer)
