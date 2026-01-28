@@ -21,7 +21,10 @@ class FinancialRecord(Base):
     net_monthly_income = Column(Numeric(15, 2))
     yearly_debt_payments = Column(Numeric(15, 2))
     credit_limit_used_pct = Column(Float)
+    credit_limit_used_pct = Column(Float)
     prev_defaults = Column(Integer)
+    account_tenure_months = Column(Integer)  
+    occupation_type = Column(String)
     created_at = Column(DateTime, server_default=func.now())
 
 class CreditScoreLog(Base):

@@ -25,7 +25,7 @@ services:
       - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-password123}@db:5432/${DB_NAME:-credit_db}
       - PYTHONPATH=/app
     depends_on:
-      - postgres
+      - db
     volumes:
       - .:/app
     # ใช้คำสั่งนี้เพื่อให้มั่นใจว่าหา module app.main เจอ
