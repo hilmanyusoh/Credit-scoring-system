@@ -12,42 +12,43 @@ class ScoringRequest(BaseModel):
     yearly_debt_payments: float
     account_tenure_months: int
     prev_defaults: int = 0
-    credit_limit_used_pct: float = 0.3
-    occupation_type: str = "พนักงานบริษัท"
     mou_status: str = "N"
 
 @app.post("/predict")
 def predict_credit(request: ScoringRequest, db: Session = Depends(database.get_db)):
-    input_data = request.dict()
+    input_data = {
+        "income": request.net_monthly_income,
+        "debt": request.yearly_debt_payments / 12,
+        "tenure": request.account_tenure_months,
+        "mou": request.mou_status,
+        "defaults": request.prev_defaults
+    }
+
     try:
-        # เรียกใช้ Engine
         result = ai.predict(input_data)
         
-        # บันทึกลง Database
+        # บันทึกลง Database (CreditScoreLog)
         new_log = models.CreditScoreLog(
             customer_id=request.customer_id,
+            record_id=None, # ข้าม Foreign Key ไปก่อน
+            raw_input_data=input_data, # ส่ง dict ให้ JSON column
             final_score=result['score'],
             grade=result['grade'],
-            is_approved=result['is_approved'],
-            raw_input_data=input_data
+            is_approved=result['is_approved']
         )
         db.add(new_log)
         db.commit()
         db.refresh(new_log)
         
         return {
-            "log_id": new_log.log_id,
-            "type_of_score": result['type_of_score'],
             "score": result['score'],
             "grade": result['grade'],
-            "repay_probability": result['repay_probability'],
-            "decision": "Approved" if result['is_approved'] else "Rejected",
-            "status": result['status']
+            "status": result['status'],
+            "is_approved": result['is_approved'],
+            "rate": result['rate'],
+            "multiplier": result['multiplier']
         }
     except Exception as e:
         db.rollback()
+        print(f"❌ API/DB ERROR: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/logs/{customer_id}")
-def get_history(customer_id: int, db: Session = Depends(database.get_db)):
-    return db.query(models.CreditScoreLog).filter(models.CreditScoreLog.customer_id == customer_id).all()

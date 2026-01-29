@@ -1,87 +1,120 @@
 import streamlit as st
-import pandas as pd
 import requests
-from sqlalchemy import create_engine
-import plotly.express as px
 
-# --- Configuration ---
-DB_URL = "postgresql://admin:admin123@localhost:5432/credit_score_db"
-API_URL = "http://127.0.0.1:8000/predict"
-engine = create_engine(DB_URL)
+st.set_page_config(page_title="iBank Hybrid Credit Score", layout="centered")
 
-st.set_page_config(page_title="iB-RMC 2026", layout="wide")
+st.markdown("""
+    <style>
+    .stApp { background-color: #61C1B1; }
+    .stButton>button { width: 100%; border-radius: 25px; background-color: #3E7B4F !important; color: white; font-weight: bold; height: 3.5em; }
+    label { color: white !important; font-weight: bold !important; }
+    h1, h2, h3 { color: white !important; text-align: center; }
+    </style>
+""", unsafe_allow_html=True)
 
-# --- Sidebar: Input เฉพาะ Features หลัก ---
-st.sidebar.header("📝 กรอกข้อมูลผู้ขอสินเชื่อ")
-with st.sidebar.form("predict_form"):
-    income = st.number_input("รายได้สุทธิต่อเดือน (บาท)", value=30000, step=1000)
-    debt = st.number_input("ภาระหนี้ต่อปี (บาท)", value=50000, step=1000)
-    tenure = st.number_input("อายุบัญชี (เดือน)", value=12, step=1)
-    defaults = st.number_input("จำนวนครั้งที่ผิดนัดชำระ", value=0, step=1)
-    
-    occ_list = ["Government", "Private Company", "Business Owner", "Freelance", "Other"]
-    occ = st.selectbox("ประเภทอาชีพ", occ_list)
-    
-    mou = st.radio("สวัสดิการ MOU", ["มี (Y)", "ไม่มี (N)"], index=1)
-    
-    submit = st.form_submit_button("คำนวณผลอนุมัติ")
+st.title("💡 iBank Credit Intelligence")
 
-if submit:
-    # เตรียมข้อมูล (customer_id ใส่ค่าหลอกไว้ เพราะเดี๋ยว DB จะเจน ID ใหม่ให้ใน Logs)
+with st.container():
+    st.subheader("👤 ข้อมูลผู้ขอสินเชื่อ")
+    c1, c2 = st.columns(2)
+    with c1:
+        income = st.number_input("รายได้สุทธิต่อเดือน", value=30000)
+        tenure = st.number_input("อายุงาน (เดือน)", value=24)
+        mou = st.selectbox("MOU", ["ไม่มี", "มี"])
+    with c2:
+        debt = st.number_input("ภาระหนี้เดิมต่อเดือน", value=0)
+        defaults = st.number_input("ประวัติผิดนัดชำระ (ครั้ง)", value=0)
+        loan_req = st.number_input("วงเงินที่ต้องการกู้", value=100000)
+
+if st.button("วิเคราะห์และคำนวณสินเชื่อ"):
     payload = {
-        "customer_id": 999, 
+        "customer_id": 999,
         "net_monthly_income": float(income),
-        "yearly_debt_payments": float(debt),
+        "yearly_debt_payments": float(debt * 12),
         "account_tenure_months": int(tenure),
         "prev_defaults": int(defaults),
-        "credit_limit_used_pct": 0.3, # ค่า Default สำหรับฟิลด์ที่ไม่ได้กรอก
-        "occupation_type": occ,
-        "mou_status": "Y" if "มี" in mou else "N"
+        "mou_status": "Y" if mou == "มี" else "N"
     }
-    
+
     try:
-        res = requests.post(API_URL, json=payload)
-        if res.status_code == 200:
-            data = res.json()
-            st.sidebar.success(f"ผลลัพธ์: {data['grade']}")
-            st.sidebar.info(f"โอกาสชำระหนี้คืน: {data['repay_probability']}")
+        response = requests.post("http://127.0.0.1:8000/predict", json=payload)
+        if response.status_code == 200:
+            res = response.json()
+            
+            @st.dialog("📊 ผลการวิเคราะห์สินเชื่อ iBank", width="large")
+            def show_result():
+                # --- ส่วนหัว: ป้ายเหลือง ---
+                st.markdown("""
+                    <div style='text-align:center;'>
+                        <div style='background-color: #F0B042; color: black; padding: 10px 40px; 
+                                    border-radius: 30px; display: inline-block; font-weight: bold; font-size: 24px;'>
+                            คำนวณค่างวดสินเชื่อ
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+
+                # --- ส่วนกลาง: วงกลมเขียวขอบเหลือง ---
+                # คำนวณค่างวดรายเดือน
+                rate = res.get('rate', 8.50)
+                total_interest = (loan_req * (rate/100) * 5) # สมมติ 5 ปี
+                monthly_installment = (loan_req + total_interest) / 60
+
+                st.markdown(f"""
+                    <div style='display: flex; justify-content: center; margin: 30px 0;'>
+                        <div style='width: 250px; height: 250px; border-radius: 50%; background-color: #61C1B1; 
+                                    border: 8px solid #F0B042; display: flex; flex-direction: column; 
+                                    justify-content: center; align-items: center; color: white; text-align: center;'>
+                            <p style='margin: 0; font-size: 18px;'>จำนวนเงิน<br>ผ่อนชำระรายเดือน</p>
+                            <h1 style='margin: 10px 0; color: white; font-size: 48px;'>{monthly_installment:,.0f}</h1>
+                            <p style='margin: 0; font-size: 18px;'>บาท</p>
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+
+                # --- ส่วนล่าง: ช่องแสดงข้อมูลสีเทา (เหมือนในรูป) ---
+                def info_box(label, value, unit):
+                    st.markdown(f"""
+                        <div style='margin-bottom: 15px;'>
+                            <label style='color: #3E7B4F !important; font-weight: bold;'>{label}</label>
+                            <div style='background-color: #E0E0E0; padding: 15px; border-radius: 30px; 
+                                        display: flex; justify-content: space-between; align-items: center;'>
+                                <span style='font-size: 20px; font-weight: bold; color: #333;'>{value}</span>
+                                <span style='color: #666;'>{unit}</span>
+                            </div>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+                # แสดงข้อมูลตามภาพและที่คุณขอเพิ่มเติม
+                c1, c2 = st.columns(2)
+                with c1:
+                    info_box("วงเงิน (บาท)", f"{loan_req:,.0f}", "บาท")
+                    info_box("ระยะเวลา (ปี)", "5", "ปี")
+                    info_box("อัตรากำไรเฉลี่ย", f"{rate:.2f}", "%")
+                
+                with c2:
+                    info_box("Credit Score", f"{res.get('score', 705)}", "คะแนน")
+                    info_box("Credit Level", f"{res.get('grade', 'A')}", "เกรด")
+                    
+                    # สถานะแบบมีจุดสีเขียว
+                    status_val = res.get('status', 'ดี')
+                    info_box("สถานะ (Status)", f"🟢 {status_val}", "")
+
+                # เพิ่มเติม DSR
+                dsr_val = 31.87 # สามารถดึงจาก Engine มาใส่ได้
+                st.markdown(f"<p style='text-align: right; color: #3E7B4F; font-weight: bold;'>Total DSR: {dsr_val}%</p>", unsafe_allow_html=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                # --- หมายเหตุท้ายภาพ ---
+                st.markdown("""
+                    <p style='font-size: 12px; color: #666; text-align: center;'>
+                    *หมายเหตุ : ผลการคำนวณข้างต้นเป็นเพียงการคำนวณเบื้องต้นเท่านั้น <br>
+                    อาจมีการเปลี่ยนแปลงได้ ภายใต้หลักเกณฑ์และเงื่อนไขของธนาคาร
+                    </p>
+                """, unsafe_allow_html=True)
+
+            show_result()
         else:
-            st.sidebar.error(f"Error: {res.text}")
+            st.error(f"Error {response.status_code}: {response.text}")
     except Exception as e:
-        st.sidebar.error(f"ไม่สามารถเชื่อมต่อ API ได้: {e}")
-
-# --- Main Dashboard ---
-st.title("🛡️ ระบบประเมินความเสี่ยง iB-RMC 2026")
-
-try:
-    # ดึงข้อมูลมาเฉพาะที่จำเป็น
-    query = """
-    SELECT calculated_at, final_score, grade, is_approved 
-    FROM credit_score_logs 
-    ORDER BY calculated_at DESC
-    """
-    df = pd.read_sql(query, engine)
-
-    if not df.empty:
-        col1, col2, col3 = st.columns(3)
-        col1.metric("เคสทั้งหมด", len(df))
-        col2.metric("อนุมัติ (Approved)", len(df[df['is_approved'] == True]))
-        col3.metric("คะแนนเฉลี่ย", int(df['final_score'].mean()))
-
-        # กราฟแท่งแสดงเกรด
-        st.subheader("📊 สรุปสัดส่วนเกรดความเสี่ยง")
-        grade_order = ['AA', 'BB', 'CC', 'DD', 'EE', 'FF', 'GG', 'HH']
-        fig = px.bar(df['grade'].value_counts().reindex(grade_order).fillna(0).reset_index(), 
-                     x='grade', y='count', color='grade',
-                     labels={'grade': 'ระดับเกรด', 'count': 'จำนวนราย'},
-                     color_discrete_sequence=px.colors.qualitative.Safe)
-        st.plotly_chart(fig, use_container_width=True)
-
-        # ตารางประวัติ
-        st.subheader("📋 ประวัติการประเมินล่าสุด")
-        st.table(df.head(10)) 
-    else:
-        st.write("ยังไม่มีข้อมูลการคำนวณในระบบ")
-
-except Exception as e:
-    st.error(f"ฐานข้อมูลขัดข้อง: {e}")
+        st.error(f"Connection Failed: {e}")

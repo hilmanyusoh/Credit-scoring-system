@@ -1,85 +1,94 @@
+import pandas as pd
 import joblib
 import os
-import pandas as pd
-import numpy as np
 
 class MLEngine:
     def __init__(self):
-        base_path = os.path.dirname(os.path.dirname(__file__))
-        # โหลดโมเดลและตัวแปรเสริม
-        self.xgb_model = joblib.load(os.path.join(base_path, "models/xgb_model.pkl"))
-        self.log_model = joblib.load(os.path.join(base_path, "models/log_model.pkl"))
-        self.scaler = joblib.load(os.path.join(base_path, "models/scaler.pkl"))
-        self.le_dict = joblib.load(os.path.join(base_path, "models/le_dict.pkl"))
+        # 1. กำหนด Absolute Path เพื่อป้องกันปัญหาหาไฟล์ไม่เจอ
+        base_path = "/Users/hilmanyusoh/Desktop/Credit-Scoring-System/models"
         
-        self.cat_defaults = {'occupation_type': 'Salaried', 'mou_status': 'N'}
+        try:
+            self.xgb = joblib.load(f"{base_path}/xgb_model.pkl")
+            self.log = joblib.load(f"{base_path}/log_model.pkl")
+            self.scaler = joblib.load(f"{base_path}/scaler.pkl")
+            self.le_dict = joblib.load(f"{base_path}/le_dict.pkl")
+            self.config = joblib.load(f"{base_path}/scoring_config.pkl")
+            print("✅ [MLEngine] Loaded all models and configurations successfully.")
+        except Exception as e:
+            print(f"❌ [MLEngine] Error loading models: {e}")
+            raise e
 
-    def predict(self, data: dict):
-        # 1. รับค่าและทำ Normalization
-        income = float(data.get('net_monthly_income', 1)) # ป้องกันหารศูนย์
+    def predict(self, data):
+        # 2. ดึงข้อมูลแบบปลอดภัย (Safe Get) พร้อมแปลง Type
+        income = float(data.get('income', 0))
+        monthly_debt = float(data.get('debt', 0))
+        tenure = int(data.get('tenure', 0))
+        mou = str(data.get('mou', 'N'))
+        defaults = int(data.get('defaults', 0))
+
+        # 3. คำนวณ Features พื้นฐาน
+        yearly_debt = monthly_debt * 12
+        dti = (yearly_debt / (income * 12)) if income > 0 else 0
         
-        occ_map = {"พนักงานบริษัท": "Salaried", "ธุรกิจส่วนตัว": "Business Owner", "อิสระ": "Freelance"}
-        raw_occ = data.get('occupation_type', 'Salaried')
-        occ_type = occ_map.get(raw_occ, raw_occ)
+        # 4. จัดการ Unseen Labels (ป้องกัน Error 500 จากค่าที่ Model ไม่รู้จัก)
+        # ดึงค่าแรกที่ LabelEncoder รู้จักมาใช้เป็นค่าเริ่มต้น
+        def_occ = self.le_dict['occupation_type'].classes_[0]
+        
+        # ตรวจสอบ mou_status (ต้องเป็น 'Y' หรือ 'N' ตามที่เคย Train)
+        mou_valid = mou if mou in self.le_dict['mou_status'].classes_ else self.le_dict['mou_status'].classes_[0]
 
-        # 2. เตรียมข้อมูล 7 Features (เรียงลำดับตามที่ Train ใน Notebook)
         ml_input = {
             "net_monthly_income": income,
-            "dti_ratio": float(data.get('yearly_debt_payments', 0)) / income,
-            "credit_limit_used_pct": float(data.get('credit_limit_used_pct', 0.3)),
-            "prev_defaults": int(data.get('prev_defaults', 0)),
-            "account_tenure_months": int(data.get('account_tenure_months', 0)),
-            "occupation_type": occ_type,
-            "mou_status": "Y" if data.get('mou_status') in ['Y', 'มี', 'Yes'] else "N"
+            "dti_ratio": dti,
+            "credit_limit_used_pct": 0.3, # ค่าสมมติฐานมาตรฐาน
+            "prev_defaults": defaults,
+            "account_tenure_months": tenure,
+            "occupation_type": def_occ,
+            "mou_status": mou_valid
         }
 
-        # สร้าง DataFrame และบังคับลำดับ Column ให้เป๊ะ
-        feature_order = [
-            'net_monthly_income', 'dti_ratio', 'credit_limit_used_pct',
-            'prev_defaults', 'account_tenure_months', 'occupation_type', 'mou_status'
-        ]
-        X_df = pd.DataFrame([ml_input])[feature_order]
-
-        # 3. Label Encoding
+        # 5. ML Prediction (40% Weight)
+        X_df = pd.DataFrame([ml_input])
+        
+        # ทำ Label Encoding
         for col, le in self.le_dict.items():
             if col in X_df.columns:
-                val = str(X_df[col].iloc[0])
-                if val in le.classes_:
-                    X_df[col] = le.transform([val])
-                else:
-                    X_df[col] = le.transform([le.classes_[0]])
-
-        # 4. คำนวณ Risk Probability (Ensemble)
-        prob_xgb = self.xgb_model.predict_proba(X_df)[0][1]
+                X_df[col] = le.transform(X_df[col].astype(str))
+        
+        # คำนวณความน่าจะเป็นของความเสี่ยง (Probability of Risk)
+        prob_xgb = self.xgb.predict_proba(X_df)[0][1]
         X_scaled = self.scaler.transform(X_df)
-        prob_log = self.log_model.predict_proba(X_scaled)[0][1]
+        prob_log = self.log.predict_proba(X_scaled)[0][1]
         
-        avg_risk_prob = (prob_xgb + prob_log) / 2
-        repay_prob = 1 - avg_risk_prob
+        # แปลงเป็นคะแนนช่วง 450 - 850
+        ml_score = int((1 - ((prob_xgb + prob_log) / 2)) * 400) + 450
 
-        # 5. คำนวณ Score (300 - 900) และเกรด GE02
-        final_score = int(300 + (repay_prob * 600))
-        grade = self._get_ge02_grade(final_score)
+        # 6. Logic Scoring (60% Weight) - อ้างอิงเกณฑ์ FICO
+        logic_score = 0
+        logic_score += 0.35 * (1 - min(defaults/1, 1)) * 850    # ประวัติชำระเงิน
+        logic_score += 0.30 * max(0, 1 - dti) * 850             # ภาระหนี้ (DTI)
+        logic_score += 0.15 * min(tenure / 120, 1) * 850       # อายุงาน (ความมั่นคง)
+        logic_score += 0.10 * (1.0 if mou_valid == 'Y' else 0.8) * 850 # พันธมิตรธุรกิจ
+        logic_score += 0.10 * 0.8 * 850                        # ปัจจัยเสริมอื่นๆ
+
+        # 7. ผสมคะแนน (Hybrid Score)
+        final_score = int(0.6 * logic_score + 0.4 * ml_score)
         
+        # 8. สรุปผล Grade และ เงื่อนไขการอนุมัติ
+        # ค้นหา Grade จาก config ถ้าไม่เจอให้ใช้เกรดต่ำสุด
+        result = next((g for g in self.config['grade_map'] if final_score >= g['min']), self.config['grade_map'][-1])
+
+        # กฎการอนุมัติ (Hard Rules)
+        is_approved = True
+        if income < 20000: is_approved = False      # รายได้ขั้นต่ำ
+        if tenure < 12: is_approved = False         # อายุงานขั้นต่ำ 1 ปี
+        if result.get('grade') in ["C", "HH"]: is_approved = False # เกรดความเสี่ยงสูง
+
         return {
-            "type_of_score": "iB-RMC 2026",
             "score": final_score,
-            "grade": grade,
-            "repay_probability": f"{repay_prob * 100:.0f}%",
-            "is_approved": final_score >= 616, # เกรด GG ขึ้นไป
-            "status": self._get_status_text(grade)
+            "grade": result.get('grade', 'N/A'),
+            "status": result.get('status', result.get('label', 'N/A')),
+            "is_approved": is_approved,
+            "multiplier": float(result.get('mult', 0)),
+            "rate": float(result.get('rate', 15.0))
         }
-
-    def _get_ge02_grade(self, score):
-        if score >= 753: return "AA"
-        if score >= 725: return "BB"
-        if score >= 699: return "CC"
-        if score >= 681: return "DD"
-        if score >= 666: return "EE"
-        if score >= 646: return "FF"
-        if score >= 616: return "GG"
-        return "HH"
-
-    def _get_status_text(self, grade):
-        good_grades = ["AA", "BB", "CC", "DD"]
-        return "ดีมาก" if grade in good_grades else "พอใช้" if grade != "HH" else "ต้องพิจารณาเป็นพิเศษ"
