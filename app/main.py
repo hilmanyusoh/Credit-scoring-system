@@ -46,7 +46,8 @@ def predict_credit(request: ScoringRequest, db: Session = Depends(database.get_d
             "status": result['status'],
             "is_approved": result['is_approved'],
             "rate": result['rate'],
-            "multiplier": result['multiplier']
+            "multiplier": result['multiplier'],
+            "dsr": result['dsr']
         }
     except Exception as e:
         db.rollback()
